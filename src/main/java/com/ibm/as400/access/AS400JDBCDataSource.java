@@ -34,6 +34,7 @@ import java.util.Random;                          // @J3a
 
 import javax.sql.DataSource;                      // JDBC2.0 std-ext
 import javax.naming.NamingException;              // JNDI
+import javax.naming.RefAddr;
 import javax.naming.Reference;                    // JNDI
 import javax.naming.Referenceable;                // JNDI
 import javax.naming.StringRefAddr;                // JNDI
@@ -103,15 +104,6 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
     private static final String TOOLBOX_DRIVER = "jdbc:as400:";
     private static final int MAX_THRESHOLD = 16777216;                  // Maximum threshold (bytes). @A3C, @A4A
     static final int MAX_SCALE = 63;                            // Maximum decimal scale
-
-    // socket options to store away in JNDI
-    private static final String SOCKET_KEEP_ALIVE = "soKeepAlive"; // @F1A
-    private static final String SOCKET_RECEIVE_BUFFER_SIZE = "soReceiveBufferSize"; // @F1A
-    private static final String SOCKET_SEND_BUFFER_SIZE = "soSendBufferSize"; // @F1A
-    private static final String SOCKET_LINGER = "soLinger"; // @F1A
-    private static final String SOCKET_TIMEOUT = "soTimeout"; // @F1A
-    private static final String SOCKET_LOGIN_TIMEOUT = "loginTimeout"; // @st3
-    private static final String SOCKET_TCP_NO_DELAY = "soTCPNoDelay"; // @F1A
 
     // Data source properties.
     transient private AS400 as400_;                           // AS400 object used to store and encrypt the password.
@@ -330,7 +322,7 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
         Properties properties = new Properties();
         sockProps_ = new SocketProperties();
 
-        Enumeration list = reference.getAll();
+        Enumeration<RefAddr> list = reference.getAll();
         while (list.hasMoreElements())
         {
             StringRefAddr refAddr = (StringRefAddr)list.nextElement();
@@ -372,26 +364,8 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
                 // set the savePasswordWhenSerialized_ flag
                 savePasswordWhenSerialized_ = value.equals(TRUE_) ? true : false;
             }
-            else if (property.equals(SOCKET_KEEP_ALIVE)) {
-                sockProps_.setKeepAlive((value.equals(TRUE_)? true : false));
-            }
-            else if (property.equals(SOCKET_RECEIVE_BUFFER_SIZE)) {
-                sockProps_.setReceiveBufferSize(Integer.parseInt(value));
-            }
-            else if (property.equals(SOCKET_SEND_BUFFER_SIZE)) {
-                sockProps_.setSendBufferSize(Integer.parseInt(value));
-            }
-            else if (property.equals(SOCKET_LINGER)) {
-                sockProps_.setSoLinger(Integer.parseInt(value));
-            }
-            else if (property.equals(SOCKET_TIMEOUT)) {
-                sockProps_.setSoTimeout(Integer.parseInt(value));
-            }
-            else if (property.equals(SOCKET_LOGIN_TIMEOUT)) {        //@st3
-                sockProps_.setLoginTimeout(Integer.parseInt(value)); //@st3
-            }
-            else if (property.equals(SOCKET_TCP_NO_DELAY)) {
-                sockProps_.setTcpNoDelay((value.equals(TRUE_)? true : false));
+            else if (SocketProperties.isSocketProperty(property)) {
+                sockProps_.restore(property, value);
             }
             else
             {
@@ -430,11 +404,12 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
      * Method to create a clone of AS400JDBCDataSource. This does a shallow
      * copy, with the exception of JDProperties, which also gets cloned.
      */
+    @Override
     public Object clone()
     {
         try
         {
-            Trace.log(Trace.INFORMATION, "AS400JDBCDataSource.close()"); 
+            Trace.log(Trace.INFORMATION, "AS400JDBCDataSource.clone()"); 
             AS400JDBCDataSource clone = (AS400JDBCDataSource) super.clone();
             clone.properties_ = (JDProperties) this.properties_.clone();
             return clone;
@@ -571,6 +546,7 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
         //to be secure, clone a SecureAS400 object; otherwise, clone an AS400 object
     	char[] aaf = properties_.getAdditionalAuthenticationFactor(); 
     	AS400 newAs400 = AS400.newInstance((isSecure_ || isSecure()), as400_);
+    	newAs400.setStayAlive(as400_.getStayAlive());
     	newAs400.setAdditionalAuthenticationFactor(aaf);
     	
         return getConnection(newAs400);
@@ -1176,6 +1152,7 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
     *  @return A Reference object of the data source object.
     *  @exception NamingException If a naming error occurs in resolving the object.
     **/
+    @Override
     public Reference getReference() throws NamingException
     {
     	
@@ -1194,13 +1171,7 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
         }
 
         // Add the Socket options
-        if (sockProps_.keepAliveSet_) ref.add(new StringRefAddr(SOCKET_KEEP_ALIVE, (sockProps_.keepAlive_ ? "true" : "false")));
-        if (sockProps_.receiveBufferSizeSet_) ref.add(new StringRefAddr(SOCKET_RECEIVE_BUFFER_SIZE, Integer.toString(sockProps_.receiveBufferSize_)));
-        if (sockProps_.sendBufferSizeSet_) ref.add(new StringRefAddr(SOCKET_SEND_BUFFER_SIZE, Integer.toString(sockProps_.sendBufferSize_)));
-        if (sockProps_.soLingerSet_) ref.add(new StringRefAddr(SOCKET_LINGER, Integer.toString(sockProps_.soLinger_)));
-        if (sockProps_.soTimeoutSet_) ref.add(new StringRefAddr(SOCKET_TIMEOUT, Integer.toString(sockProps_.soTimeout_)));
-        if (sockProps_.loginTimeoutSet_) ref.add(new StringRefAddr(SOCKET_LOGIN_TIMEOUT, Integer.toString(sockProps_.loginTimeout_))); //@st3
-        if (sockProps_.tcpNoDelaySet_) ref.add(new StringRefAddr(SOCKET_TCP_NO_DELAY, (sockProps_.tcpNoDelay_ ? "true" : "false")));
+        sockProps_.save(ref);
 
         // Add the data source properties.  (unique constant identifiers for storing in JNDI).
         if (getDatabaseName() != null)
@@ -3783,7 +3754,7 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
         //or setup socket properties or set in properties_
         //Note: this is similar to AS400JDBCDataSource(Reference reference)logic
 
-        Enumeration e = newProperties.keys();
+        Enumeration<?> e = newProperties.keys();
         while (e.hasMoreElements())
         {
             String propertyName = (String) e.nextElement();
@@ -5825,6 +5796,53 @@ implements DataSource, Referenceable, Serializable, Cloneable //@PDC 550
             JDTrace.logInformation (this, property + ": " + setting);  
     }
 
+    /**
+    *  Returns the TLS truststore  
+    **/
+    public String getTlsTruststore()
+    {
+        return properties_.getString(JDProperties.TLS_TRUSTSTORE);
+    }
+
+    /**
+    *  Sets the TLS truststore 
+    **/
+    public void setTlsTruststore(String truststore)
+    {
+        String property = JDProperties.TLS_TRUSTSTORE_;
+
+        String old = getTlsTruststore();
+        properties_.setString(JDProperties.TLS_TRUSTSTORE, truststore);
+
+        changes_.firePropertyChange(property, old, truststore);
+
+        if (JDTrace.isTraceOn()) 
+            JDTrace.logInformation (this, property + ": " + truststore ); 
+    }
+
+    /**
+    *  Returns the TLS truststore  passowrd
+    **/
+    public String getTlsTruststorePassword()
+    {
+        return properties_.getString(JDProperties.TLS_TRUSTSTORE_PASSWORD);
+    }
+
+    /**
+    *  Sets the TLS truststore password
+    **/
+    public void setTlsTruststorePassword(String truststorePassword)
+    {
+        String property = JDProperties.TLS_TRUSTSTORE_PASSWORD_;
+
+        String old = getTlsTruststore();
+        properties_.setString(JDProperties.TLS_TRUSTSTORE_PASSWORD, truststorePassword);
+
+        changes_.firePropertyChange(property, old, truststorePassword);
+
+        if (JDTrace.isTraceOn()) 
+            JDTrace.logInformation (this, property + ": " + truststorePassword ); 
+    }
 
     
     

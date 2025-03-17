@@ -24,7 +24,13 @@ import java.util.Enumeration;
 import java.io.Serializable;
 import java.io.IOException;
 import java.io.ObjectInputStream;
+import java.util.Objects;
 
+import javax.naming.NamingException;
+import javax.naming.RefAddr;
+import javax.naming.Reference;
+import javax.naming.Referenceable;
+import javax.naming.StringRefAddr;
 
 /**
  *  Manages a pool of AS400 objects.  A connection pool is used to 
@@ -84,9 +90,20 @@ import java.io.ObjectInputStream;
  *    <li>PropertyChangeEvent</li>
  *  </ul>
  **/
-public class AS400ConnectionPool extends ConnectionPool implements Serializable
+public class AS400ConnectionPool extends ConnectionPool implements Serializable, Referenceable
 {
     static final long serialVersionUID = 4L;
+    
+    private static final String CCSID_PROPERTY = "ccsid";
+    private static final String CLEANUP_INTERVAL_PROPERTY = "cleanupInterval";
+    private static final String MAX_CONNECTIONS_PROPERTY = "maxConnections";
+    private static final String MAX_INACTIVITY_PROPERTY = "maxInactivity";
+    private static final String MAX_LIFETIME_PROPERTY = "maxLifetime";
+    private static final String MAX_USE_COUNT_PROPERTY = "maxUseCount";
+    private static final String MAX_USE_TIME_PROPERTY = "maxUseTime";
+    private static final String PRETEST_CONNECTIONS_PROPERTY = "pretestConnections";
+    private static final String RUN_MAINTENANCE_PROPERTY = "runMaintenance";
+    private static final String THREAD_USED_PROPERTY = "threadUsed";
 
     /**
        Indicates that the CCSID used for new connections is the same as the system default CCSID.
@@ -110,12 +127,104 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
     }
 
     /**
+     * Constructs an AS400ConnectionPool from the specified Reference object.
+     *
+     * @param reference to retrieve the ConnectionPool properties from
+     */
+    AS400ConnectionPool(Reference reference) {
+        super();
+        initializeTransient();
+
+        Objects.requireNonNull(reference, "reference");
+        Enumeration<RefAddr> list = reference.getAll();
+        while (list.hasMoreElements()) {
+            RefAddr refAddr = list.nextElement();
+            String property = refAddr.getType();
+            String value = (String) refAddr.getContent();
+            switch (property) {
+                case CCSID_PROPERTY:
+                    setCCSID(Integer.parseInt(value));
+                    break;
+                case CLEANUP_INTERVAL_PROPERTY:
+                    setCleanupInterval(Long.parseLong(value));
+                    break;
+                case MAX_CONNECTIONS_PROPERTY:
+                    setMaxConnections(Integer.parseInt(value));
+                    break;
+                case MAX_INACTIVITY_PROPERTY:
+                    setMaxInactivity(Long.parseLong(value));
+                    break;
+                case MAX_LIFETIME_PROPERTY:
+                    setMaxLifetime(Long.parseLong(value));
+                    break;
+                case MAX_USE_COUNT_PROPERTY:
+                    setMaxUseCount(Integer.parseInt(value));
+                    break;
+                case MAX_USE_TIME_PROPERTY:
+                    setMaxUseTime(Long.parseLong(value));
+                    break;
+                case PRETEST_CONNECTIONS_PROPERTY:
+                    setPretestConnections(Boolean.parseBoolean(value));
+                    break;
+                case RUN_MAINTENANCE_PROPERTY:
+                    setRunMaintenance(Boolean.parseBoolean(value));
+                    break;
+                case THREAD_USED_PROPERTY:
+                    setThreadUsed(Boolean.parseBoolean(value));
+                    break;
+                default:
+                    if (SocketProperties.isSocketProperty(property)) {
+                        socketProperties_.restore(property, value);
+                    }
+                    break;
+            }
+        }
+    }
+
+    /**
+     * Returns the Reference object for the pool object. This is used by
+     * JNDI when bound in a JNDI naming service. Contains the information
+     * necessary to reconstruct the pool object when it is later
+     * retrieved from JNDI via an object factory.
+     *
+     * @return A Reference object of the pool object.
+     * @exception NamingException If a naming error occurs in resolving the
+     * object.
+     *
+     */
+    @Override
+    public Reference getReference() throws NamingException {
+        Trace.log(Trace.INFORMATION, "AS400ConnectionPool.getReference"); 
+
+        Reference ref = new Reference(this.getClass().getName(),
+                                     AS400ObjectFactory.class.getName(),
+                                      null);
+
+        ref.add(new StringRefAddr(CCSID_PROPERTY, Integer.toString(getCCSID())));
+        ref.add(new StringRefAddr(CLEANUP_INTERVAL_PROPERTY, Long.toString(getCleanupInterval())));
+        ref.add(new StringRefAddr(MAX_CONNECTIONS_PROPERTY, Integer.toString(getMaxConnections())));
+        ref.add(new StringRefAddr(MAX_INACTIVITY_PROPERTY, Long.toString(getMaxInactivity())));
+        ref.add(new StringRefAddr(MAX_LIFETIME_PROPERTY, Long.toString(getMaxLifetime())));
+        ref.add(new StringRefAddr(MAX_USE_COUNT_PROPERTY, Integer.toString(getMaxUseCount())));
+        ref.add(new StringRefAddr(MAX_USE_TIME_PROPERTY, Long.toString(getMaxUseTime())));
+        ref.add(new StringRefAddr(PRETEST_CONNECTIONS_PROPERTY, Boolean.toString(isPretestConnections())));
+        ref.add(new StringRefAddr(RUN_MAINTENANCE_PROPERTY, Boolean.toString(isRunMaintenance())));
+        ref.add(new StringRefAddr(THREAD_USED_PROPERTY, Boolean.toString(isThreadUsed())));
+
+        // Add the Socket options
+        socketProperties_.save(ref);
+
+        return ref;
+    }
+
+    /**
      * Remove any connections that have exceeded maximum inactivity time, replace any 
      * that have aged past maximum usage or maximum lifetime, and remove any that have 
      * been in use too long.
      *
      * @see ConnectionPoolProperties
      **/
+    @Override
     void cleanupConnections()
     {
         synchronized (as400ConnectionPool_)
@@ -148,6 +257,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
     /**
      * Close and cleanup the connection pool.
      **/
+    @Override
     public void close()
     {
         log(ResourceBundleLoader.getText("AS400CP_SHUTDOWN"));
@@ -283,6 +393,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException If a connection pool error occurred.
      * @deprecated Use fill(String systemName, String userID, char[] password, int service, int numberOfConnections) instead.
      **/
+    @Deprecated
     public void fill(String systemName, String userID, String password, int service, int numberOfConnections) throws ConnectionPoolException {
         fill(systemName, userID, password, service, numberOfConnections, null);
     }
@@ -318,6 +429,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException If a connection pool error occurred.
      * @deprecated Use fill(String systemName, String userID, char[] password, int service, int numberOfConnections, Locale locale) instead.
      **/
+    @Deprecated
     public void fill(String systemName, String userID, String password, int service, int numberOfConnections, Locale locale)  throws ConnectionPoolException
     {
         char[] passwordChars = (password != null) ? password.toCharArray() : null; 
@@ -389,6 +501,70 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
             throw new ConnectionPoolException(e);
         }
     }
+    
+    /** 
+     * Preconnects a specified number of connections to a specific system based on existing AS400 object and service.
+     * The AS400 object being passed in must have system and authentication information specified. 
+     *
+     * @param system An AS400 object that will be used to create new AS400 connections. 
+     * @param service The service to be connected. See the service number constants defined by AS400 class.
+     * @param numberOfConnections The number of connections to be made.
+     *
+     * @exception ConnectionPoolException If a connection pool error occurred.
+     **/
+    public void fill(AS400 system, int service, int numberOfConnections) throws ConnectionPoolException
+    {        
+        if (system == null) throw new NullPointerException("system");
+
+        if (numberOfConnections < 1)
+            throw new ExtendedIllegalArgumentException("numberOfConnections", ExtendedIllegalArgumentException.RANGE_NOT_VALID);
+        
+        String systemName = system.getSystemName();
+        String userID     = system.getUserId();
+        
+        if (Trace.traceOn_) log(Trace.INFORMATION, "fill() key before resolving= " + systemName + "/" + userID);
+        
+        Vector<AS400> newAS400Connections = new Vector<>();
+        systemName = AS400.resolveSystem(systemName);  
+        userID = AS400.resolveUserId(userID.toUpperCase());
+        String key = createKey(systemName, userID);
+    
+        if (Trace.traceOn_) log(Trace.INFORMATION, "fill() key after resolving= " + key);
+    
+        try
+        {
+            ConnectionList connections = as400ConnectionPool_.get(key);
+            if (log_ != null || Trace.traceOn_)
+                log(ResourceBundleLoader.substitute(ResourceBundleLoader.getText("AS400CP_FILLING"), 
+                                                    new String[] { (Integer.valueOf(numberOfConnections)).toString(), systemName, userID} ));
+            // create the specified number of connections
+            for (int i = 0; i < numberOfConnections; i++) {
+                newAS400Connections.addElement(getConnection(systemName, userID, service, true, system.isSecure(), system.getLocale(), null, system));
+            }
+            
+            connections = as400ConnectionPool_.get(key);
+            for (int j = 0; j < numberOfConnections; j++) {
+                connections.findElement(newAS400Connections.elementAt(j)).setInUse(false);
+            }
+            
+            if (Trace.traceOn_) log(Trace.INFORMATION, "Created " + numberOfConnections + "based on AS400 object.");
+        }
+        catch (AS400SecurityException|IOException e)
+        {
+            // If exception occurs, stop creating connections, run maintenance thread, and 
+            // throw whatever exception was received on creation to user.
+            ConnectionList connections = as400ConnectionPool_.get(key);
+            for (int k = 0; k < newAS400Connections.size(); k++) {
+                connections.findElement(newAS400Connections.elementAt(k)).setInUse(false); 
+            }
+            
+            if (maintenance_ != null && maintenance_.isRunning())
+                cleanupConnections();
+            log(ResourceBundleLoader.getText("AS400CP_FILLEXC"));         
+            throw new ConnectionPoolException(e);
+        }
+    }
+
 
     /**
      * Closes the connection if not explicitly closed by the caller.
@@ -488,6 +664,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException If a connection pool error occurred.
      * @deprecated
      **/
+    @Deprecated
     public AS400 getConnection(String systemName, String userID, String password, int service) throws ConnectionPoolException
     {
         char[] passwordChars = (password != null) ? password.toCharArray() : null;
@@ -547,6 +724,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException If a connection pool error occurred.
      * @deprecated Use getConnection(String systemName, String userID, char[] password, int service, Locale locale) instead. 
      **/
+    @Deprecated
     public AS400 getConnection(String systemName, String userID, String password, int service, Locale locale) throws ConnectionPoolException
     {
         char[] passwordChars = (password != null) ? password.toCharArray() : null;
@@ -601,6 +779,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException Always thrown because this method has been deprecated.
      * @deprecated  Use getConnection(String systemName, String userID, char[] password, int service) instead.
      **/
+    @Deprecated
     public AS400 getConnection(String systemName, String userID, int service) throws ConnectionPoolException
     {
         //@B4D try
@@ -637,6 +816,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException If a connection pool error occurred.
      * @deprecated Use getConnection(String systemName, String userID, char[] password) instead. 
     **/ 
+    @Deprecated
     public AS400 getConnection(String systemName, String userID, String password) throws ConnectionPoolException
     {    
         char[] passwordChars = (password != null) ? password.toCharArray() : null; 
@@ -694,6 +874,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException If a connection pool error occurred.
      * @deprecated Use getConnection(String systemName, String userID, char[] password, Locale locale)  instead. 
      **/ 
+    @Deprecated
     public AS400 getConnection(String systemName, String userID, String password, Locale locale)  throws ConnectionPoolException
     {    
         char[] passwordChars = (password != null) ? password.toCharArray() : null; 
@@ -746,6 +927,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException Always thrown because this method has been deprecated.
      * @deprecated  Use method with password instead.
      **/ 
+    @Deprecated
     public AS400 getConnection(String systemName, String userID) throws ConnectionPoolException
     {    
         //@B4D try
@@ -897,9 +1079,58 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
             throw new ConnectionPoolException(e);
         }
     }
+    
+    /** 
+     * Get an AS400 object from the connection pool with similar properties to passed-in AS400 object.  
+     * If an appropriate one is not found, one is created based on the passed-in AS400 object. 
+     * The AS400 object being passed in must have system and authentication information specified.
+     * If the maximum connection limit has been reached, an exception
+     * will be thrown.  The AS400 object may not be connected to any services.
+     *
+     * @param system An AS400 object that will be used to create new AS400 connections. 
+     * @return     An AS400 object.
+     * 
+     * @exception ConnectionPoolException If a connection pool error occurred.
+     *
+     **/
+    public AS400 getConnection(AS400 system)  throws ConnectionPoolException 
+    {
+        if (system == null) throw new NullPointerException("system");
+        
+        try {
+            return getConnection(AS400.resolveSystem(system.getSystemName()), AS400.resolveUserId(system.getUserId()), 0, false, system.isSecure(), system.getLocale(), null, system);
+        } catch (AS400SecurityException|IOException e) {
+            throw new ConnectionPoolException(e);
+        }
+    }
+    
+    /** 
+     * Get an AS400 object from the connection pool with similar properties to passed-in AS400 object.  
+     * If an appropriate one is not found, one is created based on the passed-in AS400 object.  
+     * The AS400 object being passed in must have system and authentication information specified.
+     * If the maximum connection limit has been reached, an exception
+     * will be thrown.  The AS400 object may not be connected to any services.
+     *
+     * @param system An AS400 object that will be used to create new AS400 connections. 
+     * @param service The service to be connected. See the service number constants defined by AS400 class.
+     * @return     An AS400 object.
+     * 
+     * @exception ConnectionPoolException If a connection pool error occurred.
+     *
+     **/
+    public AS400 getConnection(AS400 system, int service)  throws ConnectionPoolException 
+    {
+        if (system == null) throw new NullPointerException("system");
+        
+        try {
+            return getConnection(AS400.resolveSystem(system.getSystemName()), AS400.resolveUserId(system.getUserId()), service, true, system.isSecure(), system.getLocale(), null, system);
+        } catch (AS400SecurityException|IOException e) {
+            throw new ConnectionPoolException(e);
+        }
+    }
   
     private AS400 getConnection(String systemName, String userID, int service, boolean connect, 
-            boolean secure, Locale locale, AS400ConnectionPoolAuthentication poolAuth)  throws AS400SecurityException, IOException, ConnectionPoolException 
+            boolean secure, Locale locale, AS400ConnectionPoolAuthentication poolAuth, AS400 rootSystem)  throws AS400SecurityException, IOException, ConnectionPoolException 
     {
         if (systemName == null) throw new NullPointerException("systemName");
         if (systemName.length() == 0) throw new ExtendedIllegalArgumentException("systemName", ExtendedIllegalArgumentException.LENGTH_NOT_VALID);
@@ -972,7 +1203,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
         // We don't want to hold the lock on the entire pool if we are trying to get a connection
         // for a system that is down or non-existent. ConnectionList.getConnection() is synchronized
         // inside itself, anyway. Get a connection from the list.
-        AS400 connection = connections.getConnection(connect ? service : null, secure, poolListeners_, locale, poolAuth, socketProperties_, getCCSID()).getAS400Object();
+        AS400 connection = connections.getConnection(connect ? service : null, secure, poolListeners_, locale, poolAuth, socketProperties_, getCCSID(), rootSystem).getAS400Object();
 
         connectionHasBeenCreated_ = true;  // remember that we've created at least 1 connection
     
@@ -983,7 +1214,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
             throws AS400SecurityException, IOException, ConnectionPoolException 
     {
         AS400ConnectionPoolAuthentication poolAuth = new AS400ConnectionPoolAuthentication(password);
-        return (getConnection(systemName, userID, service, connect, secure, locale, poolAuth));
+        return (getConnection(systemName, userID, service, connect, secure, locale, poolAuth, null));
     }
 
 
@@ -991,7 +1222,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
           throws AS400SecurityException, IOException, ConnectionPoolException 
     {
         AS400ConnectionPoolAuthentication poolAuth = new AS400ConnectionPoolAuthentication(profileToken);
-        return (getConnection(systemName, userID, service, connect, secure, locale, poolAuth));
+        return (getConnection(systemName, userID, service, connect, secure, locale, poolAuth, null));
     }
 
 
@@ -1011,6 +1242,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException If a connection pool error occurred.
      * @deprecated Use  getSecureConnection(String systemName, String userID, char[] password) instead.
      **/  
+    @Deprecated
     public AS400 getSecureConnection(String systemName, String userID, String password) throws ConnectionPoolException
     {
         char[] passwordChars = (password != null) ? password.toCharArray() : null;
@@ -1066,6 +1298,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException Always thrown because this method has been deprecated.
      * @deprecated  Use getSecureConnection(String systemName, String userID, char[] password) instead.
      **/  
+    @Deprecated
     public AS400 getSecureConnection(String systemName, String userID) throws ConnectionPoolException
     {    
         //@B4D try
@@ -1104,6 +1337,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException If a connection pool error occurred.
      * @deprecated Use getSecureConnection(String systemName, String userID, char[] password, int service) instead. 
      **/
+    @Deprecated
     public AS400 getSecureConnection(String systemName, String userID, String password, int service) throws ConnectionPoolException
     {
         char[] passwordChars = (password != null) ? password.toCharArray() : null;
@@ -1159,6 +1393,7 @@ public class AS400ConnectionPool extends ConnectionPool implements Serializable
      * @exception ConnectionPoolException Always thrown because this method has been deprecated.
      * @deprecated  Use getConnection(String systemName, String userID, char[] password, int service) instead.
      **/
+    @Deprecated
     public AS400 getSecureConnection(String systemName, String userID, int service) throws ConnectionPoolException
     {
         //@B4D try
